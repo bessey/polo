@@ -16,48 +16,42 @@ module Polo
     # Public: Translates SELECT queries into INSERTS.
     #
     def translate
-      SqlTranslator.new(instances, @configuration).to_sql.uniq
+      SqlTranslator.new(instances, @configuration).to_sql
     end
 
     def instances
-      active_record_selects, raw_selects = @selects.partition{|s| s[:klass]}
-
-      active_record_instances = active_record_selects.flat_map do |select|
-        select[:klass].find_by_sql(select[:sql]).to_a
+      active_record_instances = @selects.flat_map do |select|
+        select.klass.find_by_sql(select.sql).to_a
       end
 
-      if fields = @configuration.blacklist
-        obfuscate!(active_record_instances, fields)
+      fields = @configuration.blacklist
+      if fields.present?
+        active_record_instances = active_record_instances.map { |instance| obfuscate!(instance, fields) }
       end
 
-      raw_instance_values = raw_selects.flat_map do |select|
-        table_name = select[:sql][/^SELECT .* FROM (?:"|`)([^"`]+)(?:"|`)/, 1]
-        select[:connection].select_all(select[:sql]).map { |values| {table_name: table_name, values: values} }
-      end
-
-      active_record_instances + raw_instance_values
+      active_record_instances
     end
 
     private
 
-    def obfuscate!(instances, fields)
-      instances.each do |instance|
-        next if intersection(instance.attributes.keys, fields).empty?
+    def obfuscate!(instance, fields)
+      instance if intersection(instance.attributes.keys, fields).empty?
 
-        fields.each do |field, strategy|
-          field = field.to_s
+      fields.each do |field, strategy|
+        field = field.to_s
 
-          if table = table_name(field)
-            field = field_name(field)
-          end
+        if table = table_name(field)
+          field = field_name(field)
+        end
 
-          correct_table = table.nil? || instance.class.table_name == table
+        correct_table = table.nil? || instance.class.table_name == table
 
-          if correct_table && instance.attributes[field]
-            instance.send("#{field}=", new_field_value(field, strategy, instance))
-          end
+        if correct_table && instance.attributes[field]
+          instance.send("#{field}=", new_field_value(field, strategy, instance))
         end
       end
+
+      instance
     end
 
     def field_name(field)
